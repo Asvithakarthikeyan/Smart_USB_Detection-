@@ -1,0 +1,139 @@
+import usb.core
+import usb.util
+import usb.backend.libusb1
+import libusb_package
+import wmi
+import time
+import threading
+import winsound
+import tkinter as tk
+
+print("SMART USB PROTECTION SYSTEM STARTED")
+print("Monitoring USB devices...\n")
+
+# ---------------- WMI DETECTION ----------------
+c = wmi.WMI()
+
+# ---------------- LIBUSB BACKEND ----------------
+backend = usb.backend.libusb1.get_backend(find_library=libusb_package.find_library)
+
+# ---------------- DEVICE STORAGE ----------------
+known_usb_devices = []
+known_storage_devices = set()
+known_wmi_devices = set()
+
+# ---------------- AUTHORIZED DEVICES ----------------
+AUTHORIZED_DEVICES = [
+    (1234, 5678),  # Example authorized pendrive
+    (1111, 2222)
+]
+
+print("System Ready. Insert USB device...\n")
+
+# ---------------- FUNCTION : GET USB DEVICES ----------------
+def get_usb_devices():
+    device_list = []
+    devices = usb.core.find(find_all=True, backend=backend)
+    for dev in devices:
+        device_list.append((dev.idVendor, dev.idProduct))
+    return device_list
+
+# ---------------- FUNCTION : GET STORAGE DEVICES ----------------
+def get_storage_devices():
+    device_list = set()
+    devices = usb.core.find(find_all=True, backend=backend)
+    for dev in devices:
+        try:
+            for cfg in dev:
+                for intf in cfg:
+                    if intf.bInterfaceClass == 8:  # Storage class
+                        device_list.add((dev.idVendor, dev.idProduct))
+        except:
+            pass
+    return device_list
+
+# ---------------- FUNCTION : SHOW FULLSCREEN WARNING ----------------
+def show_warning():
+    def run_window():
+        root = tk.Tk()
+        root.attributes('-fullscreen', True)
+        root.configure(background='grey')  # simulate blur
+        label = tk.Label(root, text="⚠ UNAUTHORIZED DEVICE DETECTED ⚠",
+                         font=("Arial", 50), fg="red", bg="grey")
+        label.pack(expand=True)
+        # Auto-close after 5 seconds
+        root.after(10000,lambda: root.destroy())
+        root.mainloop()
+
+    # Play beep first
+    winsound.Beep(1000, 500)  # 1 kHz beep for 0.5 sec
+    # Run Tkinter window in a daemon thread
+    t = threading.Thread(target=run_window)
+    t.daemon = True
+    t.start()
+
+# ---------------- MAIN MONITOR LOOP ----------------
+while True:
+
+    # ----------- WMI USB DETECTION -----------
+    current_wmi_devices = set()
+    for device in c.Win32_USBControllerDevice():
+        current_wmi_devices.add(device.Dependent)
+
+    new_wmi_devices = current_wmi_devices - known_wmi_devices
+    if new_wmi_devices:
+        print("New USB Device Connected! (WMI Detection)")
+
+    known_wmi_devices = current_wmi_devices
+
+    # ----------- SECURITY DETECTION -----------
+    devices = get_usb_devices()
+    for device in devices:
+        if device not in known_usb_devices:
+            print("⚠ New USB Device Detected:", device)
+
+    known_usb_devices = devices
+
+    # ----------- MONITORING DETECTION -----------
+    current_devices = set(devices)
+    new_devices = current_devices - set(known_usb_devices)
+
+    for dev in new_devices:
+        print("USB DEVICE CONNECTED")
+        print("Vendor:", dev[0])
+        print("Product:", dev[1])
+
+    removed_devices = set(known_usb_devices) - current_devices
+    for dev in removed_devices:
+        print("USB DEVICE REMOVED")
+        print("Vendor:", dev[0])
+        print("Product:", dev[1])
+
+    # ----------- STORAGE (PENDRIVE) DETECTION + AUTHORIZATION -----------
+    current_storage = get_storage_devices()
+    new_storage = current_storage - known_storage_devices
+
+    for dev in new_storage:
+        print("PENDRIVE INSERTED")
+        print("Vendor ID:", dev[0])
+        print("Product ID:", dev[1])
+
+        # ----------- AUTHORIZATION CHECK -----------
+        if dev in AUTHORIZED_DEVICES:
+            print("✔ ACCESS GRANTED - Authorized Device")
+        else:
+            print("⚠ WARNING: UNAUTHORIZED USB DEVICE")
+            # Trigger full-screen warning and beep
+            show_warning()
+
+        print("---------------------")
+
+    removed_storage = known_storage_devices - current_storage
+    for dev in removed_storage:
+        print("PENDRIVE REMOVED")
+        print("Vendor ID:", dev[0])
+        print("Product ID:", dev[1])
+        print("---------------------")
+
+    known_storage_devices = current_storage
+    time.sleep(2)
